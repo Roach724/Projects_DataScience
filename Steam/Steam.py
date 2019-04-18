@@ -43,6 +43,7 @@ test=full_minmax.iloc[len(train):]
 
 
 #交叉验证
+"""
 xgbreg=xgb.XGBRegressor(max_depth=6,learning_rate=0.03,n_estimators=500,min_child_weight=0.6,subsample=0.8,colsample_bytree=0.8,
                  reg_lambda=1.3,reg_alpha=0.6,nthread=4,n_jobs=4)
 param={ 'bagging_freq':[2,3,5],'max_depth':[6,10,12]}
@@ -67,6 +68,58 @@ result={}
 xgbmodel=xgb.train(param,xgb_train,num_boost_round=1000,early_stopping_rounds=50,verbose_eval=100,
                    evals=[(xgb_train,'train'),(xgb_val,'val')], evals_result=result)
 
-#预测，提交结果
-pred=pd.DataFrame({'prediction':xgbmodel.predict(xgb_test).round(5)})
-pred.to_csv('submission.txt',header=False,index=False)
+##Ridge回归，搜索参数
+ridge=Ridge()
+ridge_param={'alpha':[1,1.3,2,2.2,2.5]}
+ridge_gcv=GridSearchCV(ridge,ridge_param,cv=5,scoring='neg_mean_squared_error')
+ridge_cv=ridge_gcv.fit(x,y)
+print(ridge_cv.best_params_)
+print(ridge_cv.best_score_)
+
+##Lasso回归，搜索参数
+lasso=Lasso()
+lasso_param={'alpha':[0.0006,0.0007,0.0008]}
+lasso_gcv=GridSearchCV(lasso,lasso_param,cv=5,scoring='neg_mean_squared_error')
+lasso_cv=lasso_gcv.fit(x,y)
+print(lasso_cv.best_params_)
+print(lasso_cv.best_score_)
+"""
+##stacking
+def stacking(reg,X,y,test=None,nfolds=10):
+    kf=KFold(n_splits=nfolds)
+    secondary_train_set=pd.DataFrame(np.zeros((X.shape[0],1)))
+    secondary_test_set=pd.DataFrame(np.zeros((test.shape[0],nfolds)))
+    for i,(train_idx,val_idx) in enumerate(kf.split(X)):
+        train_x,train_y=X.iloc[train_idx],y[train_idx]
+        val_x,val_y=X.iloc[val_idx],y[val_idx]
+        #用第i折的训练集训练初级学习器
+        first_level_reg=reg.fit(train_x,train_y)
+        secondary_train_set.iloc[val_idx]=first_level_reg.predict(val_x).reshape(-1,1)
+        secondary_test_set.iloc[:,i]=first_level_reg.predict(test).reshape(-1,1)
+    
+    secondary_test_set=secondary_test_set.mean(axis=1)    
+    return secondary_train_set,secondary_test_set
+
+#stacking models
+ridge_model=Ridge(alpha=1.3)
+lasso_model=Lasso(alpha=0.0008)
+xgb_model=xgb.XGBRegressor(max_depth=6,learning_rate=0.03,n_estimators=500,min_child_weight=0.6,subsample=0.8,colsample_bytree=0.8,
+                 reg_lambda=1.3,reg_alpha=0.6,nthread=4,n_jobs=4)
+rf_model=RandomForestRegressor(max_leaf_nodes=100)
+models=[ridge_model,lasso_model,xgb_model,rf_model]
+train_sets=[]
+test_sets=[]
+nfolds=10
+for model in models:
+    train_set,test_set=stacking(model,x,y,test,nfolds)
+    train_sets.append(train_set)
+    test_sets.append(test_set)
+full_train=pd.concat(train_sets,axis=1)
+full_test=pd.concat(test_sets,axis=1)
+
+#线性回归次级学习器
+lr=LinearRegression()
+lr.fit(full_train,y)
+#print(mean_squared_error(y,lr.predict(full_train)))
+stacking_pred=pd.DataFrame({'prediction':lr.predict(full_test)})
+stacking_pred.to_csv('submission_stacking.txt',header=False,index=False)
