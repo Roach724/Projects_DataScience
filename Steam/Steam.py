@@ -30,9 +30,7 @@ for col in full.iloc[:,:38].columns:
 #绘制热力图，找出与目标变量相关性太弱的特征   
 _,ax=plt.subplots(1,1,figsize=(20,12))
 sns.heatmap(full[full['type']=='train'].corr(),ax=ax,annot=True)
-#剔除特征
-full.drop(['V5','V9','V11','V14','V17','V21','V27','V28','V25','V34'],axis=1,inplace=True)
-full.shape
+
 #标准化数据
 scaler=MinMaxScaler()
 y=train['target']
@@ -41,11 +39,18 @@ full_minmax=pd.DataFrame(scaler.fit_transform(full),columns=full.columns)
 x=full_minmax.iloc[:len(train)]
 test=full_minmax.iloc[len(train):]
 
-
+#剔除方差过小的变量
+less_var_cols=[]
+for col in x.columns:
+    if x[col].var()<0.01:
+        less_var_cols.append(col)
+#剔除特征
+full.drop(['V4','V12','V31','V33','V5','V9','V11','V14','V17','V21','V27','V28','V25','V34'],axis=1,inplace=True)
+full.shape
 #交叉验证
 """
 xgbreg=xgb.XGBRegressor(max_depth=6,learning_rate=0.03,n_estimators=500,min_child_weight=0.6,subsample=0.8,colsample_bytree=0.8,
-                 reg_lambda=1.3,reg_alpha=0.6,nthread=4,n_jobs=4)
+                 reg_lambda=1.3,reg_alpha=0.6,bagging_freq=2,nthread=4,n_jobs=4)
 param={ 'bagging_freq':[2,3,5],'max_depth':[6,10,12]}
 reg=GridSearchCV(xgbreg,param,cv=5,scoring='neg_mean_squared_error')
 reg_cv=reg.fit(x,y)
@@ -70,7 +75,7 @@ xgbmodel=xgb.train(param,xgb_train,num_boost_round=1000,early_stopping_rounds=50
 
 ##Ridge回归，搜索参数
 ridge=Ridge()
-ridge_param={'alpha':[1,1.3,2,2.2,2.5]}
+ridge_param={'alpha':[0.1,0.01,0.001]}
 ridge_gcv=GridSearchCV(ridge,ridge_param,cv=5,scoring='neg_mean_squared_error')
 ridge_cv=ridge_gcv.fit(x,y)
 print(ridge_cv.best_params_)
@@ -78,7 +83,7 @@ print(ridge_cv.best_score_)
 
 ##Lasso回归，搜索参数
 lasso=Lasso()
-lasso_param={'alpha':[0.0006,0.0007,0.0008]}
+lasso_param={'alpha':[0.0008,0.0005,0.0001]}
 lasso_gcv=GridSearchCV(lasso,lasso_param,cv=5,scoring='neg_mean_squared_error')
 lasso_cv=lasso_gcv.fit(x,y)
 print(lasso_cv.best_params_)
@@ -101,8 +106,8 @@ def stacking(reg,X,y,test=None,nfolds=10):
     return secondary_train_set,secondary_test_set
 
 #stacking models
-ridge_model=Ridge(alpha=1.3)
-lasso_model=Lasso(alpha=0.0008)
+ridge_model=Ridge(alpha=ridge_cv.best_params_['alpha'])
+lasso_model=Lasso(lasso_cv.best_params_['alpha'])
 xgb_model=xgb.XGBRegressor(max_depth=6,learning_rate=0.03,n_estimators=500,min_child_weight=0.6,subsample=0.8,colsample_bytree=0.8,
                  reg_lambda=1.3,reg_alpha=0.6,nthread=4,n_jobs=4)
 rf_model=RandomForestRegressor(max_leaf_nodes=100)
