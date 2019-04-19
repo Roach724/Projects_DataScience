@@ -7,7 +7,10 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import cross_val_score,cross_val_predict,KFold,GridSearchCV,cross_validate
+from sklearn.linear_model import Ridge,Lasso,LinearRegression
+from sklearn.model_selection import cross_val_score,KFold,GridSearchCV
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.feature_selection import VarianceThreshold
 import scipy.stats as stat
 %matplotlib inline
 #读取数据
