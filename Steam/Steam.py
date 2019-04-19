@@ -36,8 +36,8 @@ scaler=MinMaxScaler()
 y=train['target']
 full.drop(['target','type'],axis=1,inplace=True)
 full_minmax=pd.DataFrame(scaler.fit_transform(full),columns=full.columns)
-x=full_minmax.iloc[:len(train)]
-test=full_minmax.iloc[len(train):]
+x=full_minmax.iloc[:len(train)].reset_index(drop=True)
+test=full_minmax.iloc[len(train):].reset_index(drop=True)
 
 #剔除方差过小的变量
 less_var_cols=[]
@@ -45,50 +45,27 @@ for col in x.columns:
     if x[col].var()<0.01:
         less_var_cols.append(col)
 #剔除特征
-full.drop(['V4','V12','V31','V33','V5','V9','V11','V14','V17','V21','V27','V28','V25','V34'],axis=1,inplace=True)
-full.shape
-#交叉验证
+x.drop(['V4','V12','V31','V33','V5','V9','V11','V14','V17','V21','V27','V28','V25','V34'],axis=1,inplace=True)
+test.drop(['V4','V12','V31','V33','V5','V9','V11','V14','V17','V21','V27','V28','V25','V34'],axis=1,inplace=True)
+
+
+#构建训练集和测试集
+train_x,val_x,train_y,val_y=train_test_split(x,y,test_size=0.3)
 """
-xgbreg=xgb.XGBRegressor(max_depth=6,learning_rate=0.03,n_estimators=500,min_child_weight=0.6,subsample=0.8,colsample_bytree=0.8,
-                 reg_lambda=1.3,reg_alpha=0.6,bagging_freq=2,nthread=4,n_jobs=4)
-param={ 'bagging_freq':[2,3,5],'max_depth':[6,10,12]}
-reg=GridSearchCV(xgbreg,param,cv=5,scoring='neg_mean_squared_error')
-reg_cv=reg.fit(x,y)
-
-print(reg_cv.best_params_)
-print(reg_cv.best_score_)
-
-#构建训练集和验证集
-train_x,val_x,train_y,val_y=train_test_split(x,y,test_size=0.2,random_state=15)
 xgb_full=xgb.DMatrix(data=x,label=y)
 xgb_train=xgb.DMatrix(data=train_x,label=train_y)
 xgb_val=xgb.DMatrix(data=val_x,label=val_y)
 xgb_test=xgb.DMatrix(data=test)
-cv_result={}
-param={'eta':0.03,'eval_metric':'rmse','tree_method':'gpu_hist','subsample':0.8,'colsample_bytree':0.8,
-      'bagging_freq':2,'max_depth':6,'reg_lambda':1.3,'reg_alpha':0.6,'min_child_weight':0.6}
-cv_result=xgb.cv(param,xgb_full,num_boost_round=800,early_stopping_rounds=50,verbose_eval=100)
-#训练模型
-result={}
-xgbmodel=xgb.train(param,xgb_train,num_boost_round=1000,early_stopping_rounds=50,verbose_eval=100,
-                   evals=[(xgb_train,'train'),(xgb_val,'val')], evals_result=result)
-
-##Ridge回归，搜索参数
-ridge=Ridge()
-ridge_param={'alpha':[0.1,0.01,0.001]}
-ridge_gcv=GridSearchCV(ridge,ridge_param,cv=5,scoring='neg_mean_squared_error')
-ridge_cv=ridge_gcv.fit(x,y)
-print(ridge_cv.best_params_)
-print(ridge_cv.best_score_)
-
-##Lasso回归，搜索参数
-lasso=Lasso()
-lasso_param={'alpha':[0.0008,0.0005,0.0001]}
-lasso_gcv=GridSearchCV(lasso,lasso_param,cv=5,scoring='neg_mean_squared_error')
-lasso_cv=lasso_gcv.fit(x,y)
-print(lasso_cv.best_params_)
-print(lasso_cv.best_score_)
 """
+##训练模型
+def train_model(model,x,y,param,nfolds=5):
+    if len(param)>0:
+        gsearch=GridSearchCV(model,param,cv=nfolds,scoring='neg_mean_squared_error')
+        gsearch.fit(x,y)
+        model=gsearch.best_estimator_
+        print(gsearch.best_params_)
+        print(gsearch.best_score_)
+    return model
 ##stacking
 def stacking(reg,X,y,test=None,nfolds=10):
     kf=KFold(n_splits=nfolds)
@@ -104,14 +81,31 @@ def stacking(reg,X,y,test=None,nfolds=10):
     
     secondary_test_set=secondary_test_set.mean(axis=1)    
     return secondary_train_set,secondary_test_set
+##Ridge
+models=[]
+ridge_model=Ridge()
+ridge_param={'alpha':[0.001,0.01,0.1,1,1.01]}
+ridge_model=train_model(ridge_model,x,y,ridge_param)
+models.append(ridge_model)
+##Lasso
+lasso_model=Lasso()
+lasso_param={'alpha':[0.0001,0.001,0.001,0.1]}
+lasso_model=train_model(lasso_model,x,y,lasso_param)
+models.append(lasso_model)
+##XGBoost
+xgb_model=xgb.XGBRegressor(learning_rate=0.03,n_estimators=1000,colsample_bytree=0.7,subsample=0.7,
+                           min_child_weight=0.5,bagging_freq=5,nthread=4,n_jobs=4)
+xgb_param={'max_depth':[3,4,5],'bagging_freq':[1,3,5]}
+xgb_model=train_model(xgb_model,x,y,xgb_param)
+models.append(xgb_model)
+##Lightgbm
+lgb_model=lgb.LGBMRegressor(learning_rate=0.03,n_estimators=1000,colsample_bytree=0.8,subsample=0.8,num_leaves=16,
+                           min_child_weight=0.8,bagging_freq=1)
+lgb_param={'max_depth':[3,4,5],'bagging_freq':[1,3,5]}
+lgb_model=train_model(lgb_model,x,y,lgb_param)
+models.append(lgb_model)
 
-#stacking models
-ridge_model=Ridge(alpha=ridge_cv.best_params_['alpha'])
-lasso_model=Lasso(lasso_cv.best_params_['alpha'])
-xgb_model=xgb.XGBRegressor(max_depth=6,learning_rate=0.03,n_estimators=500,min_child_weight=0.6,subsample=0.8,colsample_bytree=0.8,
-                 reg_lambda=1.3,reg_alpha=0.6,nthread=4,n_jobs=4)
-rf_model=RandomForestRegressor(max_leaf_nodes=100)
-models=[ridge_model,lasso_model,xgb_model,rf_model]
+##Stacking models
 train_sets=[]
 test_sets=[]
 nfolds=10
@@ -126,5 +120,6 @@ full_test=pd.concat(test_sets,axis=1)
 lr=LinearRegression()
 lr.fit(full_train,y)
 #print(mean_squared_error(y,lr.predict(full_train)))
+##submit
 stacking_pred=pd.DataFrame({'prediction':lr.predict(full_test)})
 stacking_pred.to_csv('submission_stacking.txt',header=False,index=False)
