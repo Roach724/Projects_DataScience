@@ -82,7 +82,17 @@ class Embedding:
 
     #模型得分预测
     def predict(self,X):
-        
+        w=0
+        v1=0
+        v2=0
+        for col in X.columns:
+            v=np.array(self.embedding_matrix.loc[self.embedding_matrix['feature']==col&self.embedding_matrix['value']==X.loc[0,col],:])
+            w+=self.W.loc[self.W['feature']==col&self.W['value']==X.loc[0,col],:]
+            v1+=v
+            v2+=np.linalg.norm(v)
+        v1=np.linalg.norm(v1)
+        logit=w+0.5*(v1-v2)
+        p=self.sigmoid(logit)
         return p
     #拟合模型
     def fit(self,X,item_pool,ratio=5,num_iterations=5,learning_rate=0.01,verbose=True,init_model=None,label_col='label',debug=False):
@@ -100,30 +110,16 @@ class Embedding:
             if init_model.K != self.K:
                 print('Dimension does not match, K in the initial model is'+str(init_model.K)+', set K equal to the same value.\n')
                 return 0
-        #X=X.melt()
-        #X=pd.merge(X,self.embedding_matrix,how='left',on=['feature','value'])
+        m,n=X.shape
         self.losses=[]
         for i in range(num_iterations):
             loss=0.0
-            for row in X.index:
-                y=ys[row]
-                x=X.iloc[row,:]
-                y_hat=self.predict(x)
-                #gradient of bias b and coefficient w
-                g=y_hat-y
-                #compute gradient of the cross summand
-                for col1 in X.columns:
-                    
-                    for k in range(self.K):
-                        vjk=0
-                        vi=self.embeddings[col1][X.loc[row,col1]][k]
-                        for col2 in X.columns:
-                            vjk+=self.embeddings[col2][X.loc[row,col2]][k]
-    
-                        g2=g*(vjk-vi)
-                        self.w[col1][X.loc[row,col1]]-=learning_rate*g
-                        self.embeddings[col1][X.loc[row,col1]][k]-=learning_rate*g2
-                y_hat=self.predict(x)
+            for j in range(m):
+                y_hat=self.predict(X.iloc[m,:])
+
+
+
+                
                 loss+=(-(y*np.log(y_hat)+(1-y)*np.log(1-y_hat)))/len(X)     
             if verbose:
                 print('='*15+'Iteration '+str(i)+'='*15+'\n')
