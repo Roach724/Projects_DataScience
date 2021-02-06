@@ -1,4 +1,3 @@
-from lightgbm.engine import train
 import pandas as pd
 import numpy as np
 import sqlalchemy

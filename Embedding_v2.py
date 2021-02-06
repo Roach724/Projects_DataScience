@@ -1,7 +1,5 @@
-from lightgbm.engine import train
 import pandas as pd
 import numpy as np
-import sqlalchemy
 from sklearn.model_selection import train_test_split
 class Embedding:
     #K:embedding向量的维度，N:召回候选集大小
@@ -9,50 +7,27 @@ class Embedding:
         self.K=K
         self.N=N
     #初始化模型参数
-    def initmodel(self,X):
-        X=X.melt().rename(columns={'variable':'feature'})
-        embedding_dims=X.shape[0]
-        #embedding vectors
-        embedding_matrix=np.random.randn(embedding_dims,self.K)/np.sqrt(self.K)
-        col_index=['V'+str(i) for i in range(self.K)]
-        embedding_matrix=pd.DataFrame(embedding_matrix,columns=col_index)
-        #linear coefficients
-        W=np.random.randn(embedding_dims)
-        W=pd.DataFrame(W,columns=['W'])
-        
-        
-        self.embedding_matrix=pd.concat([X,embedding_matrix],axis=1)
-        self.W=pd.concat([X,W],axis=1)
-        #self.feature_index=feature_index
-        '''
-        embeddings=dict()
-        w=dict()
-        features=[]
+    def initmodel(self,data):
+        self.feature_cols=[col for col in data.columns]
+        names=[]
+        values=[]
         embedding_dims=0
-        for col in X.columns:
-            features.append(col)
-            feature_values=set(X[col])
-            embedding_dims+=len(feature_values)
-            embeddings.setdefault(col,{})
-            w.setdefault(col,{})
-            for value in feature_values:
-                embeddings[col].setdefault(value,[])
-                embeddings[col][value]=np.random.randn(self.K)/np.sqrt(self.K)
-                w[col].setdefault(value,0)
-                w[col][value]=np.random.randn(1)/np.sqrt(self.K)
-        self.features=features
-        self.n_features=len(features)
-        self.embeddings=embeddings
-        self.embedding_dims=embedding_dims
-        self.w=w
-        '''
+        for col in data.columns:
+            dim=data[col].nunique()
+            embedding_dims+=dim
+            names+=[col]*dim
+            values+=list(data[col].unique())
+        self.feature_list=np.array([names,values]).T
+        self.embedding_matrix=np.random.randn(embedding_dims,self.K)/np.sqrt(self.K)
+        self.W=np.random.randn(embedding_dims).reshape(-1,1)
+        
         
     #负采样
-    def NegativeSampling(self,X,item_pool,ratio,user_col='user_id',item_col='item_id'):
+    def NegativeSampling(self,data,item_pool,ratio,user_col='user_id',item_col='item_id'):
         tmps=[]
-        for user_id in X[user_col].unique():
+        for user_id in data[user_col].unique():
             tmp=pd.DataFrame()
-            pos_item=X.loc[X[user_col]==user_id,item_col]
+            pos_item=data.loc[data[user_col]==user_id,item_col]
             neg_item=[]
             n=0
             for i in range(0,15*ratio):
@@ -70,52 +45,56 @@ class Embedding:
             tmps.append(tmp)
         neg_sample=pd.concat(tmps,axis=0)
         del tmps
-        other_feature=[col for col in X.columns if col not in [user_col,item_col,'label']]
+        other_feature=[col for col in data.columns if col not in [user_col,item_col,'label']]
         for col in other_feature:
-            neg_sample[col]=X[col]
-        data=pd.concat([X,neg_sample],axis=0)
+            neg_sample[col]=data[col]
+        data=pd.concat([data,neg_sample],axis=0)
         data['label']=data['label'].fillna(0)
         idx=np.random.permutation(len(data))
         data=data.iloc[idx,:].reset_index(drop=True)
-        
         return data
 
     #模型得分预测
-    def predict(self,X):
-        w=0
-        v1=0
-        v2=0
-        for col in X.columns:
-            v=np.array(self.embedding_matrix.loc[self.embedding_matrix['feature']==col&self.embedding_matrix['value']==X.loc[0,col],:])
-            w+=self.W.loc[self.W['feature']==col&self.W['value']==X.loc[0,col],:]
-            v1+=v
-            v2+=np.linalg.norm(v)
-        v1=np.linalg.norm(v1)
-        logit=w+0.5*(v1-v2)
-        p=self.sigmoid(logit)
-        return p
+    def predict(self,data):
+        data=np.array(data)
+        if np.ndim(data)<2:
+            print('Expecting 2-D array.\n')
+            return 0
+        m,n=data.shape
+        V=np.zeros((m,self.K,n))
+        W=np.zeros((m,n))
+        for j in range(n):
+            values=data[:,j].astype(str)
+            v=self.embedding_lookup(self.feature_cols[j],values=values)
+            w=self.linear_lookup(self.feature_cols[j],values=values)
+            V[:,:,j]=v
+            W[:,j]=w
+        logit=np.sum(W,axis=1)+0.5*(np.linalg.norm(np.sum(V,axis=2),axis=1)-np.sum(np.linalg.norm(V,axis=1),axis=1))
+        return self.sigmoid(logit)
     #拟合模型
-    def fit(self,X,item_pool,ratio=5,num_iterations=5,learning_rate=0.01,verbose=True,init_model=None,label_col='label',debug=False):
+    def fit(self,data,item_pool,ratio=5,num_iterations=5,learning_rate=0.01,verbose=True,init_model=None,label_col='label',debug=False):
         #负采样，标记数据
-        X[label_col]=1
-        X=self.NegativeSampling(X,item_pool,ratio)
-        ys=X[label_col]
-        X.drop(columns=[label_col],inplace=True)
+        data[label_col]=1
+        data=self.NegativeSampling(data,item_pool,ratio)
+        ys=data[label_col]
+        data.drop(columns=[label_col],inplace=True)
         #增量训练
         if init_model is None:
-            self.initmodel(X)
+            self.initmodel(data)
         else:
-            self.embbedings=init_model.embeddings
-            self.w=init_model.w
+            self.embbeding_matrix=init_model.embedding_matrix
+            self.W=init_model.W
             if init_model.K != self.K:
                 print('Dimension does not match, K in the initial model is'+str(init_model.K)+', set K equal to the same value.\n')
                 return 0
-        m,n=X.shape
+        data=np.array(data)
+        m,n=data.shape
         self.losses=[]
-        for i in range(num_iterations):
+        for k in range(num_iterations):
             loss=0.0
-            for j in range(m):
-                y_hat=self.predict(X.iloc[m,:])
+            for i in range(m):
+                y_hat=self.predict(data[i])
+
 
 
 
@@ -136,7 +115,35 @@ class Embedding:
                 rank.setdefault(item,0)
                 rank[item]=self.predict(user,item)
         return dict(sorted(rank.items(),key=lambda x:x[1],reverse=True)[0:self.N])
+    def embedding_lookup(self,feature,values=None):
+        if len([feature])>1:
+            print('Only support for individual feature.\n')
+            return
+        feature_idx=np.isin(self.feature_list[:,0],feature)
+        
+        if values is None:
+            lookup=self.embedding_matrix[feature_idx,:]
+        else:
+            value_idx=np.array([np.argmax(self.feature_list[feature_idx,1]==v) for v in values])
+            lookup=self.embedding_matrix[feature_idx,:]
+            lookup=lookup[value_idx,:]
+        return lookup
 
+    def linear_lookup(self,feature,values=None):
+        if len([feature])>1:
+            print('Only support for individual feature.\n')
+            return
+        feature_idx= np.isin(self.feature_list[:,0],feature)
+        if values is None:
+            lookup=self.W[feature_idx,:].T
+        else:
+            value_idx=np.array([np.argmax(self.feature_list[feature_idx,1]==v) for v in values])
+            lookup=self.W[feature_idx,:]
+            lookup=lookup[value_idx].T
+        return lookup
+
+
+        
     def recall_dataset(self,data,is_test=False,test_size=0.2):
         tmps=[]
         data['label_prior']=1
