@@ -48,7 +48,7 @@ class Embedding:
         other_feature=[col for col in data.columns if col not in [user_col,item_col,'label']]
         for col in other_feature:
             neg_sample[col]=data[col]
-        data=pd.concat([data,neg_sample],axis=0)
+        data=pd.concat([data,neg_sample],axis=0,sort=False)
         data['label']=data['label'].fillna(0)
         idx=np.random.permutation(len(data))
         data=data.iloc[idx,:].reset_index(drop=True)
@@ -58,26 +58,26 @@ class Embedding:
     def predict(self,data):
         data=np.array(data)
         if np.ndim(data)<2:
-            print('Expecting 2-D array.\n')
-            return 0
+            data=data.reshape(1,-1)
         m,n=data.shape
         V=np.zeros((m,self.K,n))
         W=np.zeros((m,n))
         for j in range(n):
             values=data[:,j].astype(str)
-            v=self.embedding_lookup(self.feature_cols[j],values=values)
-            w=self.linear_lookup(self.feature_cols[j],values=values)
+            v,_,_=self.embedding_lookup(self.feature_cols[j],values=values)
+            w,_,_=self.linear_lookup(self.feature_cols[j],values=values)
             V[:,:,j]=v
             W[:,j]=w
         logit=np.sum(W,axis=1)+0.5*(np.linalg.norm(np.sum(V,axis=2),axis=1)-np.sum(np.linalg.norm(V,axis=1),axis=1))
         return self.sigmoid(logit)
     #拟合模型
-    def fit(self,data,item_pool,ratio=5,num_iterations=5,learning_rate=0.01,verbose=True,init_model=None,label_col='label',debug=False):
+    def fit(self,data,item_pool,ratio=5,num_iterations=5,learning_rate=0.01,verbose=True,init_model=None,debug=False):
         #负采样，标记数据
-        data[label_col]=1
+        data['label']=1
         data=self.NegativeSampling(data,item_pool,ratio)
-        ys=data[label_col]
-        data.drop(columns=[label_col],inplace=True)
+        y=np.array(data['label'])
+        data.drop(columns=['label'],inplace=True)
+        
         #增量训练
         if init_model is None:
             self.initmodel(data)
@@ -90,18 +90,26 @@ class Embedding:
         data=np.array(data)
         m,n=data.shape
         self.losses=[]
-        for k in range(num_iterations):
+        for t in range(num_iterations):
             loss=0.0
             for i in range(m):
                 y_hat=self.predict(data[i])
-
-
-
-
-                
-                loss+=(-(y*np.log(y_hat)+(1-y)*np.log(1-y_hat)))/len(X)     
+                g0=y_hat-y[i]
+                for j in range(n):
+                    feature=self.feature_cols[j]
+                    value=[data[i,j]]
+                    _,feature_idx,value_idx=self.embedding_lookup(feature,value)
+                    _,w_feature_idx,w_value_idx=self.linear_lookup(feature,value)
+                    
+                    for k in range(self.K):
+                        inter1=np.sum(self.embedding_matrix[feature_idx][value_idx,k],axis=0)
+                        self.embedding_matrix[feature_idx][value_idx,k]-=(learning_rate*g0*(inter1-self.embedding_matrix[feature_idx][value_idx,k]))
+                    
+                    self.W[w_feature_idx][w_value_idx]-=(learning_rate*g0)
+                y_hat=self.predict(data[i])
+                loss+=(-(y[i]*np.log(y_hat)+(1-y[i])*np.log(1-y_hat)))/len(data)     
             if verbose:
-                print('='*15+'Iteration '+str(i)+'='*15+'\n')
+                print('='*15+'Iteration '+str(t)+'='*15+'\n')
                 print('cross entropy loss: '+str(loss))
             self.losses.append(loss)
             #self.eta*=0.9
@@ -127,7 +135,7 @@ class Embedding:
             value_idx=np.array([np.argmax(self.feature_list[feature_idx,1]==v) for v in values])
             lookup=self.embedding_matrix[feature_idx,:]
             lookup=lookup[value_idx,:]
-        return lookup
+        return lookup,feature_idx,value_idx
 
     def linear_lookup(self,feature,values=None):
         if len([feature])>1:
@@ -140,7 +148,7 @@ class Embedding:
             value_idx=np.array([np.argmax(self.feature_list[feature_idx,1]==v) for v in values])
             lookup=self.W[feature_idx,:]
             lookup=lookup[value_idx].T
-        return lookup
+        return lookup,feature_idx,value_idx
 
 
         

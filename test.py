@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import lightgbm as lgb
 import time
+from scipy import sparse
+from sklearn.preprocessing import OneHotEncoder
+import warnings
+warnings.filterwarnings('ignore')
 
 if __name__=='__main__':
     
@@ -19,11 +23,13 @@ if __name__=='__main__':
     
     start=time.time()
     #print(np.array(train).shape)
-    print(emb.predict(train))
+    emb.fit(train.iloc[:100,:],item_pool,ratio=2,learning_rate=0.1)
+    #print(emb.predict(train.iloc[:100,:]))
+
     #print(emb.embedding_matrix.shape)
     end=time.time()
     print('Time elapse: %s seconds'%(end-start))
     
-
+     
     
     
