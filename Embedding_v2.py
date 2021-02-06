@@ -19,7 +19,7 @@ class Embedding:
             values+=list(data[col].unique())
         self.feature_list=np.array([names,values]).T
         self.embedding_matrix=np.random.randn(embedding_dims,self.K)/np.sqrt(self.K)
-        self.W=np.random.randn(embedding_dims).reshape(-1,1)
+        self.W=(np.random.randn(embedding_dims)/np.sqrt(self.K)).reshape(-1,1)
         
         
     #负采样
@@ -90,22 +90,28 @@ class Embedding:
         data=np.array(data)
         m,n=data.shape
         self.losses=[]
+        
         for t in range(num_iterations):
             loss=0.0
             for i in range(m):
                 y_hat=self.predict(data[i])
                 g0=y_hat-y[i]
+                values=data[i]
+                _,features_idx,values_idx=self.embedding_lookup(self.feature_cols,values)
                 for j in range(n):
                     feature=self.feature_cols[j]
                     value=[data[i,j]]
                     _,feature_idx,value_idx=self.embedding_lookup(feature,value)
                     _,w_feature_idx,w_value_idx=self.linear_lookup(feature,value)
-                    
                     for k in range(self.K):
-                        inter1=np.sum(self.embedding_matrix[feature_idx][value_idx,k],axis=0)
-                        self.embedding_matrix[feature_idx][value_idx,k]-=(learning_rate*g0*(inter1-self.embedding_matrix[feature_idx][value_idx,k]))
-                    
-                    self.W[w_feature_idx][w_value_idx]-=(learning_rate*g0)
+                        inter1=np.sum(self.embedding_matrix[features_idx][values_idx,k])
+                        print(self.embedding_matrix[features_idx][values_idx,k].shape)
+                        g1=inter1-self.embedding_matrix[feature_idx][value_idx,k][0]
+                        
+                        self.embedding_matrix[feature_idx][value_idx,k][0]-=learning_rate*(g0*g1)[0]
+
+                    self.W[w_feature_idx][w_value_idx]-=learning_rate*g0
+                
                 y_hat=self.predict(data[i])
                 loss+=(-(y[i]*np.log(y_hat)+(1-y[i])*np.log(1-y_hat)))/len(data)     
             if verbose:
@@ -130,11 +136,11 @@ class Embedding:
         feature_idx=np.isin(self.feature_list[:,0],feature)
         
         if values is None:
-            lookup=self.embedding_matrix[feature_idx,:]
+            lookup=self.embedding_matrix[feature_idx]
         else:
             value_idx=np.array([np.argmax(self.feature_list[feature_idx,1]==v) for v in values])
-            lookup=self.embedding_matrix[feature_idx,:]
-            lookup=lookup[value_idx,:]
+            lookup=self.embedding_matrix[feature_idx]
+            lookup=lookup[value_idx]
         return lookup,feature_idx,value_idx
 
     def linear_lookup(self,feature,values=None):
@@ -143,10 +149,10 @@ class Embedding:
             return
         feature_idx= np.isin(self.feature_list[:,0],feature)
         if values is None:
-            lookup=self.W[feature_idx,:].T
+            lookup=self.W[feature_idx].T
         else:
             value_idx=np.array([np.argmax(self.feature_list[feature_idx,1]==v) for v in values])
-            lookup=self.W[feature_idx,:]
+            lookup=self.W[feature_idx]
             lookup=lookup[value_idx].T
         return lookup,feature_idx,value_idx
 
