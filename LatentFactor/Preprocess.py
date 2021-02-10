@@ -8,7 +8,7 @@ import seaborn as sns
 import lightgbm as lgb
 from LatentFactor import RecommendList
 #from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import recall_score,roc_curve,plot_roc_curve,precision_score
+from sklearn.metrics import recall_score,roc_curve,precision_score
 
 def load_data():
 #data preparation
