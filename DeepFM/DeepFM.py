@@ -1,9 +1,12 @@
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 import warnings
+import os
 from sklearn.metrics import roc_auc_score
+import Preprocess as prep
 warnings.filterwarnings('ignore')
-path_model='E:\\kyk-ml\\Recommendation_FactorModel+lightgbm\\'
+path_model='D:\\Github\\projects-1\\DeepFM\\'
 class crosslayer(tf.keras.layers.Layer):
     def __init__(self,output_dim=64,**kwargs):
         super(crosslayer,self).__init__(**kwargs)
@@ -110,7 +113,7 @@ class DeepFatorizationMachine(tf.keras.Model):
         item_embedding=self.item_embedding(item_hash)
         item_embedding=self.flatten(item_embedding)
         
-        embedding=tf.concat([user_embedding,item_embedding],axis=1)
+        embedding=tf.concat(values=[user_embedding,item_embedding],axis=1)
 
         #FM layer
         fm_pred=self.FM([sparse_matrix,embedding])
@@ -121,6 +124,14 @@ class DeepFatorizationMachine(tf.keras.Model):
         #map the output by sigmoid function
         pred=self.pred(add)
         return pred
+def roc_auc(y_true,y_pred):
+    return tf.py_function(roc_auc_score,(y_true,y_pred),tf.float16)
+def feeling_lucky():
+    return
+
+
+
+
 
 class FactorizationMachine(tf.keras.Model):
     def __init__(self,output_dim=64,linear_reg=0.01,bias_reg=0.01):
@@ -140,8 +151,9 @@ class FactorizationMachine(tf.keras.Model):
         logit=self.logit([linear,cross])
         pred=self.pred(logit)
         return pred
-def roc_auc(y_true,y_pred):
-    return tf.py_function(roc_auc_score,(y_true,y_pred),tf.float16)
+
+
+
 
 
 '''Single Factorization Machine

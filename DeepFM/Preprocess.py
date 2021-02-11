@@ -49,7 +49,6 @@ def process_data(data,item_pool,test_data=None,batch_size=256,sampling_ratio=10)
     matrix=[]
     matrix_test=[]
     for f in tqdm(df.select_dtypes(include='object').columns):
-
         ohe.fit(df[f].values.reshape(-1,1))
         encoding=ohe.transform(df[f].values.reshape(-1,1))
         matrix.append(encoding)
