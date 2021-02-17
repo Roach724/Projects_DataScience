@@ -13,6 +13,8 @@ class LatentFactor:
         user_item=self.transform(data)
         P=dict()
         Q=dict()
+
+        self.C=dict(data.groupby(['item_id'])['user_id'].count().sort_values(ascending=False))
         #2021/2/1 change initialization to be proportional to 1/sqrt(F)
         for user,items in user_item.items():
             P.setdefault(user,[])
@@ -25,15 +27,27 @@ class LatentFactor:
     #负采样
     def NegativeSampling(self,items,item_pool,ratio):
         ret=dict()
+        c_sum=0
+        a=1e-3
+        for item in self.C.keys():
+            c_sum+=(self.C[item])
         for i in items:
-            ret.setdefault(i,0)
-            ret[i]=1
+            z=self.C[item]/c_sum
+            drop_rate=(np.sqrt(z/a)+1)*(a/z)
+            p=np.random.rand(1)
+            if p>drop_rate:
+                ret.setdefault(i,0)
+                ret[i]=1
         n=0
-        for i in range(0,10*ratio):
+        
+        for i in range(0,100*ratio):
             item=item_pool[np.random.randint(0,len(item_pool)-1)]
+            pick_rate=((self.C[item])**0.75)/c_sum**0.75
+            p=np.random.rand(1)
             if item in ret: ##若随机样本已在列表中则跳过
                 continue
-            ret[item]=0
+            if p>=pick_rate:
+                ret[item]=0
             n+=1
             if n>ratio*len(items):
                 break
@@ -49,6 +63,7 @@ class LatentFactor:
         else:
             self.P=init_model.P
             self.Q=init_model.Q
+            self.C=init_model.C
             if init_model.F != self.F:
                 print('Dimension does not match, F in the initial model is'+str(init_model.F)+', set F equal to the same value.\n')
                 return 0
@@ -57,8 +72,8 @@ class LatentFactor:
         new_users=0
         new_items=0
         self.losses=[]
-        for i in tqdm(range(iters)):
-            print('\n'+'='*15+'Iteration '+str(i)+'='*15+'\n')
+        for i in range(iters):
+            
             loss=0.0
             for user,items in user_item.items():
                 #user cold start
@@ -90,6 +105,7 @@ class LatentFactor:
                     loss+=(-(y*np.log(yhat)+(1-y)*np.log(1-yhat))+reg)/(len(samples)*len(user_item))
                     #print(loss)
             if verbose:
+                print('='*20+'Iteration '+str(i)+'='*20)
                 print('cross entropy loss: '+str(loss))
             self.losses.append(loss)
             #self.eta*=0.9
@@ -188,7 +204,8 @@ class LatentFactor:
         return lgb_clf
 
     def feeling_lucky(self,user_ids,topK=5):
-        user_ids=list(user_ids)
+        if not isinstance(user_ids,list):
+            print('inputs must be a list.\n')
         tmps=[]
         for user_id in user_ids:
             try:

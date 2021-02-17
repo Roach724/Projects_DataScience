@@ -9,6 +9,11 @@ import warnings
 warnings.filterwarnings('ignore')
 
 def NegativeSampling(data,item_pool,ratio,user_col='user_id',item_col='item_id'):
+
+    freq=dict(data.groupby([item_col])[user_col].count().sort_values(ascending=False))
+    user_item=dict(data.groupby([user_col])[item_col].agg(set))
+
+    '''
     data['label']=1
     tmps=[]
     for user_id in data[user_col].unique():
@@ -39,13 +44,16 @@ def NegativeSampling(data,item_pool,ratio,user_col='user_id',item_col='item_id')
     idx=np.random.permutation(len(data))
     data=data.iloc[idx,:].reset_index(drop=True)
     return data
-def process_data(data,item_pool,test_data=None,batch_size=256,sampling_ratio=10):
+    '''
+def process_data(data,item_pool,user_field=['user_id'],item_field=['item_id'],test_data=None,buffer_size=10000,batch_size=1024,sampling_ratio=10):
     #ohe=OneHotEncoder(handle_unknown='ignore')
     df=data.copy()
     df=NegativeSampling(df,item_pool,sampling_ratio)
     if test_data is not None:
         df_test=test_data.copy()
         df_test=NegativeSampling(df_test,item_pool,sampling_ratio)
+
+    
     '''
     matrix=[]
     matrix_test=[]
@@ -59,22 +67,22 @@ def process_data(data,item_pool,test_data=None,batch_size=256,sampling_ratio=10)
     datamatrix=sparse.hstack(matrix)
     '''
     target=df['label'].values
-    user_field=df['user_id'].values
-    item_field=df['item_id'].values
+    user_field=df[user_field].values
+    item_field=df[item_field].values
     dataset=tf.data.Dataset.from_tensor_slices(({'user_field':user_field,'item_field':item_field},target))
-    dataset=dataset.shuffle(len(data)+1).batch(batch_size)
+    dataset=dataset.shuffle(buffer_size).batch(batch_size)
     if test_data is not None:
         #datamatrix_test=sparse.hstack(matrix_test)
-        user_field=df_test['user_id'].values
-        item_field=df_test['item_id'].values
+        user_field=df_test[user_field].values
+        item_field=df_test[user_field].values
         try:
             target=df_test['label'].values
             dataset_test=tf.data.Dataset.from_tensor_slices(({'user_field':user_field,'item_field':item_field},target))
-            dataset_test=dataset_test.shuffle(10000).batch(batch_size)
+            dataset_test=dataset_test.shuffle(buffer_size).batch(batch_size)
         except:
             print('No label exist in test set.\n')
             dataset_test=tf.data.Dataset.from_tensor_slices({'user_field':user_field,'item_field':item_field})
-            dataset_test=dataset_test.shuffle(10000).batch(batch_size)
+            dataset_test=dataset_test.shuffle(buffer_size).batch(batch_size)
         return dataset,dataset_test
     return dataset 
 
