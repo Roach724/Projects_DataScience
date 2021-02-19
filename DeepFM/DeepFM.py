@@ -1,12 +1,12 @@
+import datetime
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 import warnings
 import os
 from sklearn.metrics import roc_auc_score
-import Preprocess as prep
+import preprocess as prep
 warnings.filterwarnings('ignore')
-path_model='D:\\Github\\projects-1\\DeepFM\\'
 class crosslayer(tf.keras.layers.Layer):
     def __init__(self,output_dim=64,**kwargs):
         super(crosslayer,self).__init__(**kwargs)
@@ -32,31 +32,31 @@ class FM(tf.keras.layers.Layer):
         self.crosslayer=crosslayer(self.embedding_dim)
         self.logit=tf.keras.layers.Add()
     def call(self,inputs):
-        sparse_feature,embedding=inputs
-        linear=self.linear(sparse_feature)
-        cross=self.crosslayer(embedding)
+        #sparse_feature,embedding=inputs
+        linear=self.linear(inputs)
+        cross=self.crosslayer(inputs)
         logit=self.logit([linear,cross])
         return logit
 class DNN(tf.keras.layers.Layer):
     def __init__(self):
         super(DNN,self).__init__()
     def build(self,input_shape):
-        self.dense1=tf.keras.layers.Dense(200,kernel_regularizer=tf.keras.regularizers.l2(0.02),
+        self.dense1=tf.keras.layers.Dense(256,kernel_regularizer=tf.keras.regularizers.l2(0.02),
                                             bias_regularizer=tf.keras.regularizers.l2(0.02),
                                             kernel_initializer=tf.keras.initializers.glorot_normal(),activation='relu',name='dnn_layer1')
-        self.dropout1=tf.keras.layers.Dropout(0.3)
-        self.dense2=tf.keras.layers.Dense(256,kernel_regularizer=tf.keras.regularizers.l2(0.02),
+        self.dropout1=tf.keras.layers.Dropout(0.4)
+        self.dense2=tf.keras.layers.Dense(128,kernel_regularizer=tf.keras.regularizers.l2(0.02),
                                             bias_regularizer=tf.keras.regularizers.l2(0.02),
                                             kernel_initializer=tf.keras.initializers.glorot_normal(),activation='relu',name='dnn_layer2')
-        self.dropout2=tf.keras.layers.Dropout(0.1)
-        self.dense3=tf.keras.layers.Dense(200,kernel_regularizer=tf.keras.regularizers.l2(0.02),
+        self.dropout2=tf.keras.layers.Dropout(0.8)
+        self.dense3=tf.keras.layers.Dense(64,kernel_regularizer=tf.keras.regularizers.l2(0.02),
                                             bias_regularizer=tf.keras.regularizers.l2(0.02),
                                             kernel_initializer=tf.keras.initializers.glorot_normal(),activation='relu',name='dnn_layer3')
-        self.dropout3=tf.keras.layers.Dropout(0.2)
-        self.dense4=tf.keras.layers.Dense(128,kernel_regularizer=tf.keras.regularizers.l2(0.02),
+        self.dropout3=tf.keras.layers.Dropout(0.7)
+        self.dense4=tf.keras.layers.Dense(32,kernel_regularizer=tf.keras.regularizers.l2(0.02),
                                             bias_regularizer=tf.keras.regularizers.l2(0.02),
                                             kernel_initializer=tf.keras.initializers.glorot_normal(),activation='relu',name='dnn_layer4')
-        self.dropout4=tf.keras.layers.Dropout(0.4)
+        self.dropout4=tf.keras.layers.Dropout(0.3)
         self.dense5=tf.keras.layers.Dense(1,kernel_initializer=tf.keras.initializers.glorot_normal(),name='dnn_layer5')
         
     def call(self,inputs,training=None):
@@ -75,57 +75,78 @@ class DNN(tf.keras.layers.Layer):
         dense5=self.dense5(dense4)
         return dense5
 class DeepFatorizationMachine(tf.keras.Model):
-    def __init__(self,embedding_dim=64,hash_bins=100000):
+    def __init__(self,embedding_dim=64,num_bins=512):
         super(DeepFatorizationMachine,self).__init__()
         self.embedding_dim=embedding_dim
-        self.hash_bins=hash_bins
-    def build(self,input_shape):
+        self.num_bins=num_bins
 
-        #Hashing and embedding for sparse/categorical features
-        self.user_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.hash_bins,name='user_field_hashing')
-        self.user_embedding=tf.keras.layers.Embedding(input_dim=self.hash_bins,output_dim=self.embedding_dim,name='user_field_embedding')
-        self.item_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.hash_bins,name='item_field_hashing')
-        self.item_embedding=tf.keras.layers.Embedding(input_dim=self.hash_bins,output_dim=self.embedding_dim,name='item_field_embedding')
-        
-        #one hot layer for categorical features
-        self.user_encoder=tf.keras.layers.experimental.preprocessing.CategoryEncoding(max_tokens=self.hash_bins)
-        self.item_encoder=tf.keras.layers.experimental.preprocessing.CategoryEncoding(max_tokens=self.hash_bins)
+    def build(self,input_shape):
+        #embedding for sparse/categorical features
+
+
+        #
+        self.user_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.num_bins)
+        self.user_embedding=tf.keras.layers.Embedding(input_dim=self.num_bins,output_dim=self.embedding_dim,name='user_id_embedding',
+        embeddings_initializer=tf.keras.initializers.glorot_normal())
+        #
+        self.item_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.num_bins)
+        self.item_embedding=tf.keras.layers.Embedding(input_dim=self.num_bins,output_dim=self.embedding_dim,name='item_id_embedding',
+        embeddings_initializer=tf.keras.initializers.glorot_normal())
+        #
+        '''
+        self.region_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.num_bins)
+        self.region_embedding=tf.keras.layers.Embedding(input_dim=self.num_bins,output_dim=self.embedding_dim,name='region_id_embedding',
+        embeddings_initializer=tf.keras.initializers.glorot_normal())
+        #
+        self.city_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.num_bins)
+        self.city_embedding=tf.keras.layers.Embedding(input_dim=self.num_bins,output_dim=self.embedding_dim,name='city_id_embedding',
+        embeddings_initializer=tf.keras.initializers.glorot_normal())
+        '''
+        #
+        #self.catalog_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.num_bins)
+        self.catalog_embedding=tf.keras.layers.Embedding(input_dim=self.num_bins,output_dim=self.embedding_dim,name='catalog_embedding',
+        embeddings_initializer=tf.keras.initializers.glorot_normal())
+      
         #flatten embedding
         self.flatten=tf.keras.layers.Flatten()
+
         self.FM=FM(self.embedding_dim*2)
         self.DNN=DNN()
         self.add=tf.keras.layers.Add()
         self.pred=tf.keras.layers.Activation(activation='sigmoid')
+
     def call(self,inputs,training=None):
-        user_field=inputs['user_field']
-        item_field=inputs['item_field']
-        #sparse_matrix=inputs['sparse_matrix']
-        #Hashing for user/item ids
+        
+        user_id=inputs['user_id']
+        item_id=inputs['item_id']
+        #region_id=inputs['region_id']
+        #city_id=inputs['city_id']
+        item_catalog=inputs['item_catalog']
+        #sparse=tf.concat([user_id,item_id,region,city,item_catalog],axis=1)
+
         if training:
-            self.user_hash.adapt(user_field)
-            self.item_hash.adapt(item_field)
-            #self.user_encoder.adapt(self.user_indexer.adapt(user_field))
-            #self.item_encoder.adapt(self.item_indexer.adapt(item_field))
-
-        user_hash=self.user_hash(user_field)
-        item_hash=self.item_hash(item_field)
-
+            self.user_hash.adapt(user_id)
+            self.item_hash.adapt(item_id)
+            #self.region_hash.adapt(region_id)
+            #self.city_hash.adapt(city_id)
+            #self.catalog_hash.adapt(item_catalog)
         #embedding layers for user/item related sparse features
-        user_embedding=self.user_embedding(user_hash)
-        user_embedding=self.flatten(user_embedding)
-        item_embedding=self.item_embedding(item_hash)
-        item_embedding=self.flatten(item_embedding)
-        embedding=tf.concat([user_embedding,item_embedding],axis=1)
 
-        #construct sparse matrix
-        user_encode=self.user_encoder(user_hash)
-        item_encode=self.item_encoder(item_hash)
+        #user field
+        user_embedding=self.flatten(self.user_embedding(self.user_hash(user_id)))
+        #region_embedding=self.flatten(self.region_embedding(self.region_hash(region_id)))
+        #city_embedding=self.flatten(self.city_embedding(self.city_hash(city_id)))
+        #item field
+        item_embedding=self.flatten(self.item_embedding(self.item_hash(item_id)))
+        catalog_embedding=self.flatten(self.catalog_embedding(item_catalog))
 
-        sparse_matrix=tf.concat([user_encode,item_encode],axis=1)
-        #FM layer
-        fm_pred=self.FM([sparse_matrix,embedding])
-        #DNN layer
-        dnn_pred=self.DNN(embedding)
+        #concat embeddings
+        embeddings=tf.concat([user_embedding,item_embedding,catalog_embedding],axis=1)
+
+        #FM
+        fm_pred=self.FM(embeddings)
+        #DNN
+        dnn_pred=self.DNN(embeddings)
         #combine the outputs from the two layers
         add=self.add([fm_pred,dnn_pred])
         #map the output by sigmoid function
@@ -134,25 +155,72 @@ class DeepFatorizationMachine(tf.keras.Model):
 
 def roc_auc(y_true,y_pred):
     return tf.py_function(roc_auc_score,(y_true,y_pred),tf.float16)
-def get_prediction(model,dataset):
+def get_prediction(model,dataset,feature_cols=['user_id','item_id','item_catalog']):
     if not isinstance(dataset,tf.data.Dataset):
         print('Input must be a tensorflow dataset: tf.data.Dataset object.\n')
         return 0
-    user_field=[]
-    item_field=[]
+    user_id=[]
+    item_id=[]
+    item_catalog=[]
     y_true=[]
     for i in dataset.as_numpy_iterator():
-        #print(i[0]['sparse_matrix'].shape)
-        user_field.append(i[0]['user_field'])
-        item_field.append(i[0]['item_field'])
+        
+        user_id.append(i[0]['user_id'])
+        item_id.append(i[0]['item_id'])
+        item_catalog.append(i[0]['item_catalog'])
         y_true.append(i[1])
-    user_field=np.concatenate(user_field)
-    item_field=np.concatenate(item_field)
-    X_test={'user_field':user_field,'item_field':item_field}
+    user_id=np.concatenate(user_id)
+    item_id=np.concatenate(item_id)
+    item_catalog=np.concatenate(item_catalog)
+    X_test={'user_id':user_id,'item_id':item_id,'item_catalog':item_catalog}
     y_true=np.hstack(y_true)
     y_score=model.predict(X_test)
-    return y_true,y_score
+    df=pd.DataFrame(X_test)
+    df['score']=y_score
+    return y_true,y_score,df
 
+def feeling_lucky(model,user_ids,topK=5,feature_cols=['user_id','item_id','item_catalog']):
+
+    delta=datetime.timedelta(days=14)
+    now=datetime.datetime.now().strftime(format='%Y/%m/%d')
+    past=(datetime.datetime.now()-delta).strftime(format='%Y/%m/%d')
+    #use all items as retrieval candidates
+    candidates=prep.load_item_pool(past,now,as_list=False)
+    candidates=candidates.drop_duplicates()
+
+    engine_str0='mysql+pymysql://kykviewer:$KykForView@keyikedb.mysql.rds.aliyuncs.com/wechat_finance_db'
+    sql0="select id as item_id,catalog as item_catalog ,name as item_name from chsell_product"
+    item_type=pd.read_sql(sql=sql0,con=engine_str0).fillna(0)
+    item_data=candidates.merge(item_type,how='inner',on='item_id')
+    engine_str='mysql+pymysql://kykviewer:$KykForView@keyikedb.mysql.rds.aliyuncs.com/bigdata'
+    sql="select channel_id as user_id,ifnull(region_id,'unk') as region_id,ifnull(city_id,'unk') as city_id \
+        from chsell_quick_bi where channel_id in ("+','.join(user_ids)+")"
+    user_data=pd.read_sql(sql=sql,con=engine_str)
+    tmp=[]
+    for user_id in user_ids:
+        df=pd.DataFrame()
+        df['item_id']=item_data['item_id']
+        df['user_id']=user_id.replace("'",'')
+        tmp.append(df)
+    df=pd.concat(tmp,axis=0)
+    df=df.merge(user_data,how='inner',on='user_id')
+    df=df.merge(item_data,how='inner',on='item_id').loc[:,feature_cols]
+    X=df.to_dict(orient='list')
+    for col,values in X.items():
+        X[col]=np.array(values)
+    pred=model.predict(X)
+    X=pd.DataFrame(X)
+    X['score']=pred
+
+    X['rank']=X.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
+    X=X.sort_values(by=['user_id','rank']).reset_index(drop=True)
+    X=X.loc[:,['user_id','item_id','rank']]
+    X=X.merge(item_type,how='inner',on='item_id').loc[:,['user_id','item_name','rank']]
+    recmd_list=X[X['rank']<=topK].set_index(['user_id','rank']).unstack(-1).reset_index()
+    #.droplevel(1).reset_index().set_index(['user_id','rank']).unstack(-1).reset_index()
+    recmd_list.columns=[int(col) if isinstance(col,int) else col for col in recmd_list.columns.droplevel(0)]
+
+    return recmd_list
 
 class FactorizationMachine(tf.keras.Model):
     def __init__(self,output_dim=64,linear_reg=0.01,bias_reg=0.01):
