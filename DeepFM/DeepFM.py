@@ -162,6 +162,7 @@ class DeepFatorizationMachine(tf.keras.Model):
     
     #加载模型     
     def load_model_weights(self,path=r'.\deeplearning\DeepFM\DeepFM.h5'):
+        print("xxxxxx")
         #假数据以启动模型
         data={'user_id':np.array([1,1]),'item_id':np.array([1,1]),
             'gender':np.array([1,1]),'age':np.array([1,1]),'item_catalog':np.array([1,1]),'hour':np.array([1,1]),
@@ -185,6 +186,16 @@ class DeepFatorizationMachine(tf.keras.Model):
         setting_file = path.replace('.h5', '.setting')
         with open(setting_file, 'w') as f:
             json.dump(self.setting, f)
+
+        # 训练函数
+
+    def retrain(self, data, epochs=10, batch_size=32, learning_rate=0.01):
+        # 增加负样本
+        data_set = self.sampling(data)
+        data_set = data_set.shuffle(len(data_set)).batch(batch_size)
+        # 编译并训练模型
+        self.compile(loss=tf.keras.losses.BinaryCrossentropy(), optimizer=tf.keras.optimizers.Adam(learning_rate))
+        self.fit(data_set, epochs=epochs)
 
     #预测函数
     def guess_you_like(self,df,topK=36,json_like=True):
@@ -276,16 +287,16 @@ class DeepFatorizationMachine(tf.keras.Model):
         df['item_id']=self.item_hash(df['item_id'].values).numpy()
         return df
     #加载模型     
-    def load_model_weights(self,path=r'.\deeplearning\DeepFM\DeepFM.h5'):
-        #假数据以启动模型
-        data={'user_id':np.array([1,1]),'item_id':np.array([1,1]),
-            'gender':np.array([1,1]),'age':np.array([1,1]),'item_catalog':np.array([1,1]),'hour':np.array([1,1]),
-            'minute':np.array([1,1]),'second':np.array([1,1]),'weekday':np.array([1,1])}
-        self(data)
-        self.load_weights(path)
+    # def load_model_weights(self,path=r'.\deeplearning\DeepFM\DeepFM.h5'):
+    #     #假数据以启动模型
+    #     data={'user_id':np.array([1,1]),'item_id':np.array([1,1]),
+    #         'gender':np.array([1,1]),'age':np.array([1,1]),'item_catalog':np.array([1,1]),'hour':np.array([1,1]),
+    #         'minute':np.array([1,1]),'second':np.array([1,1]),'weekday':np.array([1,1])}
+    #     self(data)
+    #     self.load_weights(path)
 #保存模型
-    def save_model_weights(self,path=r'.\deeplearning\DeepFM\DeepFM.h5'):
-        self.save_weights(path)
+    # def save_model_weights(self,path=r'.\deeplearning\DeepFM\DeepFM.h5'):
+    #     self.save_weights(path)
 
 
 

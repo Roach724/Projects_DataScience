@@ -4,10 +4,6 @@ import pandas as pd
 import datetime
 import time
 import tensorflow as tf
-from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
-from tensorflow.python.keras.backend import convert_inputs_if_ragged
-from tensorflow.python.keras.backend_config import epsilon
-from tensorflow.python.platform import gfile
 import warnings
 import sqlalchemy
 import os
@@ -88,14 +84,13 @@ class FM(tf.keras.layers.Layer):
 
 #definition of the deepFM model     
 class DeepFatorizationMachine(tf.keras.Model):
-    def __init__(self,embedding_dim=64,records=1000,num_bins=31268,**kwargs):
+    def __init__(self,embedding_dim=64,num_bins=31268,**kwargs):
         super(DeepFatorizationMachine,self).__init__(**kwargs)
         self.embedding_dim=embedding_dim
         self.num_bins=num_bins
         self.user_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=self.num_bins)
         self.gender_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=4)
         self.item_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=500)
-        self.records=records
 
         self.user_embedding=tf.keras.layers.Embedding(input_dim=self.num_bins,output_dim=self.embedding_dim,name='user_id_embedding',
         embeddings_initializer=tf.keras.initializers.glorot_normal())
@@ -115,7 +110,7 @@ class DeepFatorizationMachine(tf.keras.Model):
         embeddings_initializer=tf.keras.initializers.glorot_normal())
         self.catalog_embedding=tf.keras.layers.Embedding(input_dim=40,output_dim=16,name='catalog_embedding',
         embeddings_initializer=tf.keras.initializers.glorot_normal())
-        self.id_layer=IDLayer()
+        
 
         self.flatten=tf.keras.layers.Flatten()
         self.FM=FM(32)
@@ -617,67 +612,3 @@ def insert_data(data):
     engine_str='mysql+pymysql://ksr-app:Ka-user@2506@keyike.ltd/kyk_ml'
     engine=sqlalchemy.create_engine(engine_str)
     data.to_sql('chsell_quick_bi_Product_recommendation',if_exists='replace',con=engine,index=False,chunksize=256000)
-'''
-class FactorizationMachine(tf.keras.Model):
-    def __init__(self,output_dim=64,linear_reg=0.01,bias_reg=0.01):
-        super(FactorizationMachine,self).__init__()
-        self.output_dim=output_dim
-        self.linear_reg=linear_reg
-        self.bias_reg=bias_reg
-    def build(self,input_shape):
-        self.linear=tf.keras.layers.Dense(1,kernel_regularizer=tf.keras.regularizers.l2(self.linear_reg),
-                                          bias_regularizer=tf.keras.regularizers.l2(self.bias_reg),name='linear')
-        self.crosslayer=crosslayer(self.output_dim)
-        self.logit=tf.keras.layers.Add()
-        self.pred=tf.keras.layers.Activation(activation='sigmoid')
-    def call(self,x):
-        linear=self.linear(x)
-        cross=self.crosslayer(x)
-        logit=self.logit([linear,cross])
-        pred=self.pred(logit)
-        return pred
-'''
-'''
-class crosslayer(tf.keras.layers.Layer):
-    def __init__(self,output_dim=64,**kwargs):
-        super(crosslayer,self).__init__(**kwargs)
-        self.output_dim=output_dim
-    def build(self,input_shape):
-        self.kernel = self.add_weight(name='kernel', 
-                                     shape=(input_shape[-1],self.output_dim),
-                                     initializer=tf.keras.initializers.glorot_normal(),
-                                     trainable=True)
-        super(crosslayer, self).build(input_shape)
-    def call(self,x):
-        a=tf.keras.backend.pow(tf.keras.backend.dot(x,self.kernel),2)
-        b=tf.keras.backend.dot(tf.keras.backend.pow(x,2),tf.keras.backend.pow(self.kernel,2))
-        return 0.5*tf.keras.backend.mean(a-b,1,keepdims=True) 
-    def get_config(self):
-        config=super(crosslayer,self).get_config()
-        config.update({'output_dim':self.output_dim})
-        return config
-'''
-'''
-class FM(tf.keras.layers.Layer):
-    def __init__(self,embedding_dim=64,linear_reg=0.01,bias_reg=0.01,**kwargs):
-        super(FM,self).__init__(**kwargs)
-        self.embedding_dim=embedding_dim
-        self.linear_reg=linear_reg
-        self.bias_reg=bias_reg
-    def build(self,input_shape):
-        self.linear=tf.keras.layers.Dense(1,kernel_regularizer=tf.keras.regularizers.l2(self.linear_reg),
-                                          bias_regularizer=tf.keras.regularizers.l2(self.bias_reg),name='linear')
-        self.crosslayer=crosslayer(self.embedding_dim)
-        self.logit=tf.keras.layers.Add()
-        super(FM, self).build(input_shape)
-    def call(self,inputs):
-        #sparse_feature,embedding=inputs
-        linear=self.linear(inputs)
-        cross=self.crosslayer(inputs)
-        logit=self.logit([linear,cross])
-        return logit
-    def get_config(self):
-        config=super(FM,self).get_config()
-        config.update({'embedding_dim':self.embedding_dim,'linear_reg':self.linear_reg,'bias_reg':self.bias_reg})
-        return config
-'''

@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 inference=True
 inc_train=False
 evaluate=False
-model=dfm.DeepFatorizationMachine(records=10000)
+model=dfm.DeepFatorizationMachine()
 '''
 ids=dfm.load_user_id()
 user_ids=[]
@@ -28,10 +28,10 @@ if os.path.exists(r'.\deeplearning\DeepFM\DeepFM.h5'):
         print('loading model.\n' )
         model.load_model_weights()
         #model.save_pb()
-        #recmd=model.feeling_lucky(user_ids,topK=10,scores=True)
+        recmd=model.feeling_lucky(user_ids,topK=75,scores=True)
         #dfm.insert_data(recmd)
-        #print(recmd)
-        print(model.MAX_ID)
+        print(recmd)
+        
     if evaluate:
         print('loading model.\n' )
         model.load_model_weights()
@@ -54,8 +54,8 @@ if os.path.exists(r'.\deeplearning\DeepFM\DeepFM.h5'):
         
 else:
     #全量重新训练
-    train_set,test_set=model.data_pipeline(sampling_ratio=3,full_train=True,increment=False,test=True,forth=14)
-    train_set=train_set.shuffle(len(train_set)).batch(90000)
+    train_set,test_set=model.data_pipeline(sampling_ratio=3,full_train=True,increment=False,test=True,forth=35)
+    train_set=train_set.shuffle(len(train_set)).batch(8192)
     test_set=test_set.shuffle(len(test_set)).batch(1024)
     
     model.compile(loss=tf.keras.losses.BinaryCrossentropy(),optimizer=tf.keras.optimizers.Adam(0.01),metrics=[dfm.roc_auc,tf.keras.metrics.Recall(),
