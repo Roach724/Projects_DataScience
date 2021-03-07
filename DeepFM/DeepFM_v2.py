@@ -38,19 +38,64 @@ class crosslayer(tf.keras.layers.Layer):
     def get_config(self):
         config=super(crosslayer,self).get_config()
         return config
+def Item2vec(X,y):
+    vocab_size=50
+    sequence_length=8
+    unique_id=100
+
+    tag_vectorize_layer=tf.keras.layers.experimental.preprocessing.TextVectorization(max_tokens=vocab_size,output_mode='int',
+    output_sequence_length=sequence_length,name='tag_vectorize')
+    tag_embedding_layer=tf.keras.layers.Embedding(vocab_size+1,8,name='tag_embedding_layer')
+
+    id_vectorize_layer=tf.keras.layers.experimental.preprocessing.TextVectorization(output_mode='int',
+    output_sequence_length=1,name='id_vectorize',vocabulary=np.unique(X['id']))
+    id_embedding_layer=tf.keras.layers.Embedding(unique_id+1,8,name='id_embedding_layer')
+
+    tag_vectorize_layer.adapt(X['item_tag'])
+    id_vectorize_layer.adapt(X['id'])
+
+    item_id=tf.keras.layers.Input(shape=(1,),dtype=tf.string,name='id')
+    item_tag=tf.keras.layers.Input(shape=(1,),dtype=tf.string,name='item_tag')
+
+    
+    tag_embedding=tag_embedding_layer(tag_vectorize_layer(item_tag))
+    id_embedding=id_embedding_layer(id_vectorize_layer(item_id))
+
+    global_avg=tf.keras.layers.GlobalAveragePooling1D()(tf.concat([tag_embedding,id_embedding],axis=1))
+    dnn1=tf.keras.layers.Dense(16,activation='relu')(global_avg)
+    pred=tf.keras.layers.Dense(1,activation='sigmoid')(dnn1)
+
+    model=tf.keras.Model(inputs={'id':item_id,'item_tag':item_tag},outputs=pred)
+    model.compile(optimizer=tf.keras.optimizers.Adam(0.01),loss=tf.keras.losses.BinaryCrossentropy(),metrics=tf.keras.metrics.AUC())
+    model.fit(x=X,y=y,epochs=20,verbose=2)
+    model.save('item2vec')
+    return model
+def item_similarity(item_id):
+    #tag_weights=model.get_layer('tag_embedding').get_weights()[0]
+    model=tf.keras.models.load_model('item2vec')
+    id_weights=model.get_layer('id_embedding').get_weights()[0]
+    vocab=model.get_layer('id_vectorize').get_vocabulary()
+    idx=vocab.index(item_id)
+    item_vec=id_weights[idx]
+    data_dict=dict()
+    for index,word in enumerate(vocab):
+        if index==0: continue
+        if index==1: continue
+        if word==item_id: continue
+        vec=id_weights[index]
+        product=np.dot(item_vec.T,vec)
+        data_dict.setdefault(word,0)
+        data_dict[word]=product
+    data_dict=dict(sorted(data_dict.items(),key=lambda x: x[1],reverse=True))
+    return data_dict
 def DeepFM():
     #Input layers
     user_id_input=tf.keras.Input(shape=(1,),dtype=tf.string,name='user_id')
     item_id_input=tf.keras.Input(shape=(1,),dtype=tf.string,name='item_id')
     gender_input=tf.keras.Input(shape=(1,),dtype=tf.string,name='gender')
     item_catalog_input=tf.keras.Input(shape=(1,),dtype=tf.int32,name='item_catalog')
-    #weekday_input=tf.keras.Input(shape=(1,),dtype=tf.int32,name='weekday')
-    #hour_input=tf.keras.Input(shape=(1,),dtype=tf.int32,name='hour')
-    #minute_input=tf.keras.Input(shape=(1,),dtype=tf.int32,name='minute')
-    #second_input=tf.keras.Input(shape=(1,),dtype=tf.int32,name='second')
     #profit_type_input=tf.keras.Input(shape=(profit_type_tokens,),dtype=tf.int32,name='profit_type')
     #settle_cycle_input=tf.keras.Input(shape=(settle_cycle_tokens,),dtype=tf.int32,name='settle_cycle')
-    #time_stamp_input=tf.keras.Input(shape=(1,),dtype=tf.float32,name='time_stamp')
     #Hashing
     user_id_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=user_tokens,name='user_id_hash')(user_id_input)
     item_id_hash=tf.keras.layers.experimental.preprocessing.Hashing(num_bins=item_tokens,name='item_id_hash')(item_id_input)
@@ -60,10 +105,6 @@ def DeepFM():
     item_embedding=tf.keras.layers.Embedding(item_tokens,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='item_id_embedding')(item_id_hash)
     gender_embedding=tf.keras.layers.Embedding(gender_tokens,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='gender_embedding')(gender_hash)
     item_catalog_embedding=tf.keras.layers.Embedding(item_catalog_tokens,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='item_catalog_embedding')(item_catalog_input)
-    #weekday_embedding=tf.keras.layers.Embedding(8,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='weekday_embedding')(weekday_input)
-    #hour_embedding=tf.keras.layers.Embedding(25,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='hour_embedding')(hour_input)
-    #minute_embedding=tf.keras.layers.Embedding(61,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='minute_embedding')(minute_input)
-    #second_embedding=tf.keras.layers.Embedding(61,embedding_dim,embeddings_initializer=tf.keras.initializers.glorot_normal(),name='second_embedding')(second_input)
     #profit_type_embedding=tf.keras.layers.Embedding(profit_type_tokens,output_dim=embedding_dim,name='profit_type_embedding')(profit_type_input)
     #settle_cycle_embedding=tf.keras.layers.Embedding(settle_cycle_tokens,output_dim=embedding_dim,name='settle_cycle_embedding')(settle_cycle_input)
     #item_tag_embedding=tf.keras.layers.Embedding(200,embedding_dim,input_length=item_tag_tokens,name='item_tag_embedding')(item_tag_input)
@@ -120,7 +161,6 @@ def retrain(model,data,epochs=3,learning_rate=0.01):
         data[key]=np.array(data[key])
     model.compile(loss=tf.keras.losses.BinaryCrossentropy(), optimizer=tf.keras.optimizers.Adam(learning_rate))
     model.fit(data,epochs=epochs,batch_size=32)
-    #similarity_matrix(model)
     return model
 
 def guess_you_like(model,df,topK=36,json_like=True,predict_type='single'):
@@ -237,7 +277,7 @@ def get_items():
     #---TODO---
     return item_feature
 
-def similarity_matrix(model):
+def similarity(model,item_id):
     #offline
     item_list=pd.read_sql(sql=sql_item,con=engine_str)
     item_list=list(item_list['item_id'].drop_duplicates())
@@ -246,8 +286,8 @@ def similarity_matrix(model):
     if online:
         item_list=get_items()
     '''
-    hash_layer=model.get_layer(name='item_id_hash')
-    embedding_layer=model.get_layer(name='item_id_embedding')
+    vectorize_layer=model.get_layer(name='id_vectorize')
+    embedding_layer=model.get_layer(name='id_embedding')
     data_dict=dict()
     for item in item_list:
         products=[]
