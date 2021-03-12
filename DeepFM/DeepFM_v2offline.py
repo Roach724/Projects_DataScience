@@ -16,13 +16,13 @@ sequence_length=11
 item_catalog_tokens=13
 tag_tokens=10
 user_fields=['user_id','member_type','user_type']
-item_fields=['item_id','item_catalog','item_tags']
+item_fields=['item_id','item_catalog','item_tag']
+
 #model parameters
 embedding_dim=16
 hidden_units=256
 l2_regularization=3.2
 ## offline components
-engine_str='mysql+pymysql://kykviewer:$KykForView@keyikedb.mysql.rds.aliyuncs.com/wechat_finance_db'
 '''
 sql="select op.id as ID,channel_id as user_id,Channel_use_type as user_type,number_type as member_type, \
 is_Tax_credit as is_tax,is_Ticket_loan as is_fapiao,is_Personal_loan as is_personal,is_Credit_card,is_Mortgage_loan as is_mortgage,is_financial,is_accumulation_fund,is_bill,is_Merchant_loan as is_merchant_loan, \
@@ -61,21 +61,6 @@ def sampling(data,ratio=3):
     idx=np.random.permutation(len(data))
     data=data.iloc[idx,:].reset_index(drop=True)
     return data
-
-def load_log_data():
-    data=pd.read_sql(sql=sql,con=engine_str)
-    print(data['ID'].max())
-    data.drop(columns='ID',inplace=True)
-    data.drop_duplicates()
-    print(len(data))
-    return data
-def data_pipeline(data,ratio=3):
-    data=sampling(data,ratio)
-    y=data.pop('label').values
-    X=data.to_dict(orient='list')
-    for key,values in X.items():
-        X[key]=np.array(values)
-    return X,y
 
 def cross_validation(X,y,train_batch_size=16932,test_batch_size=4096,epochs=5,cv=2,n_splits=5,shuffle=True,random_state=None):
     #Cross validation
@@ -267,13 +252,49 @@ def get_similar_items(item2vec,item_features,item_id,cold_start=None):
     cos_dict=dict(sorted(cos_dict.items(),key=lambda x: x[1],reverse=True))
     sim_dict['item_list']=cos_dict
     return sim_dict
+def Retrieval(pred_model,prep_model,user_item,topK=36):
+    encode_dict=dict()
+    #user_vectors=dict()
+    item_vectors=dict()
+    user_pooling=[]
+    user_item_encode=prep_model(user_item)
+    for i,feature in enumerate(user_fields+item_fields):
+        encode_dict.setdefault(feature,0)
+        encode_dict[feature]=user_item_encode[i].numpy()
+    for key in encode_dict.keys():
+        if key in user_fields:
+            #user_vectors.setdefault(key,0)
+            #user_vectors[key]=pred_model.get_layer(key+'_embedding')(encode_dict[key]).numpy()
+            user_pooling.append(pred_model.get_layer(key+'_embedding')(encode_dict[key]).numpy()[0,:,:])
+        if key in item_fields:
+            item_vectors.setdefault(key,0)
+            item_vectors[key]=pred_model.get_layer(key+'_embedding')(encode_dict[key]).numpy()
+    
+    retrieval_dict=dict()
+    retrieval_dict.setdefault('user_id',[])
+    retrieval_dict.setdefault('item_id',[])
+    retrieval_dict.setdefault('cosine',[])
+    user_vector=np.concatenate(user_pooling,axis=0).mean(axis=0).reshape(1,-1)
+    user_vector=user_vector/np.linalg.norm(user_vector)
+    for i in range(len(user_item['item_id'])):
+        item_id=user_item['item_id'][i]
+        retrieval_dict['user_id'].append(user_item['user_id'][0])
+        retrieval_dict['item_id'].append(item_id)
+        item_pooling=[]
+        for feat in item_fields:
+            item_pooling.append(item_vectors[feat][i,:,:])
+        item_vector=np.concatenate(item_pooling,axis=0).mean(axis=0).reshape(1,-1)
+        item_vector=item_vector/np.linalg.norm(item_vector)
+        retrieval_dict['cosine'].append(np.dot(user_vector,item_vector.T)[0,0])
+    retrieval=pd.DataFrame(retrieval_dict)
+    retrieval=retrieval.sort_values(by='cosine',ascending=False).reset_index(drop=True)[:topK]
+    return retrieval
 ##model definition
 class crosslayer(tf.keras.layers.Layer):
     def __init__(self,**kwargs):
         super(crosslayer,self).__init__(**kwargs)
     def build(self,input_shape):
         super(crosslayer, self).build(input_shape)
-        #self.kernel=self.add_weight(shape=(input_shape[-1],16))
     def call(self,inputs):
         square_of_sum=tf.keras.backend.square(tf.keras.backend.sum(inputs,axis=1,keepdims=True))
         sum_of_square=tf.keras.backend.sum(tf.keras.backend.square(inputs),axis=1,keepdims=True)
@@ -304,7 +325,7 @@ def Prep_model():
     name='item_id_vectorize')(item_id_input)
     item_tag_vectorize=tf.keras.layers.experimental.preprocessing.TextVectorization(output_mode='int',output_sequence_length=sequence_length,
     name='item_tag_vectorize')(item_tag_input)
-    item_catalog_intlookup=tf.keras.layers.experimental.preprocessing.IntegerLookup(name='item_catalog_intlookup')(item_catalog_input)
+    item_catalog_intlookup=tf.keras.layers.experimental.preprocessing.IntegerLookup(name='item_catalog_vectorize')(item_catalog_input)
 
     model=tf.keras.Model(inputs=[user_id_input,user_type_input,member_type_input,item_id_input,item_catalog_input,item_tag_input],
                         outputs=[user_id_vectorize,user_type_vectorize,member_type_vectorize,
@@ -316,7 +337,7 @@ def train_prep_model(prep,X):
     prep.get_layer(name='item_id_vectorize').adapt(np.unique(X['item_id']))
     prep.get_layer(name='member_type_vectorize').adapt(np.unique(X['member_type']))
     prep.get_layer(name='user_type_vectorize').adapt(np.unique(X['user_type']))
-    prep.get_layer(name='item_catalog_intlookup').adapt(np.unique(X['item_catalog']))
+    prep.get_layer(name='item_catalog_vectorize').adapt(np.unique(X['item_catalog']))
     return prep
 def preprocess(prep_model,data):
     data=prep_model(data)
@@ -400,10 +421,10 @@ def retrain(model,data,epochs=3,learning_rate=0.01):
     model.fit(data,epochs=epochs,batch_size=32)
     #similarity_matrix(model)
     return model
-def guess_you_like(model,prep_model,df,topK=36,json_like=True,predict_type='single'):
-        X=df
+def guess_you_like(model,prep_model,X,topK=36,json_like=True,predict_type='single'):
         for key in user_fields:
-            X[key]=np.repeat(X[key],len(X['item_id']))
+            if len(X[key])!=len(X['item_id']):
+                X[key]=np.repeat(X[key],len(X['item_id']))
         X_prep=preprocess(prep_model,X)
         pred=model.predict(X_prep)
         df=pd.DataFrame(X)
