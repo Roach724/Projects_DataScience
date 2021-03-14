@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.lib.arraysetops import isin
 import pandas as pd
 import tensorflow as tf
 import warnings
@@ -8,6 +9,7 @@ import os
 warnings.filterwarnings('ignore')
 user_fields=['user_id','member_type','user_type']
 item_fields=['item_id','item_catalog','item_tags']
+embedding_dim=8
 #tool functions
 def jsonify(data):
     if not isinstance(data,pd.DataFrame):
@@ -87,21 +89,25 @@ def retrain(ranker,data,epochs=3,learning_rate=0.01):
     ranker.compile(loss=tf.keras.losses.BinaryCrossentropy(), optimizer=tf.keras.optimizers.Adam(learning_rate))
     ranker.fit(data,epochs=epochs,batch_size=32)
     return ranker
-def guess_you_like(ranker,vectorizer,df,topK=36,json_like=True,predict_type='single'):
-    X=df.copy()
+def pad_dict(data):
     for key in user_fields:
-        X[key]=np.repeat(X[key],len(X['item_id']))
+        data[key]=np.repeat(data[key],len(data['item_id']))
+    return data
+def guess_you_like(ranker,vectorizer,data,topK=36,json_like=True,predict_type='single'):
+    X=data.copy()
+    if len(X['user_id'])<len(X['item_id']):
+        X=pad_dict(X)
     X_transform=vectorize(vectorizer,X)
     pred=ranker.predict(X_transform)
-    df=pd.DataFrame(X)
-    df['score']=pred
-    df['rank']=df.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
-    recmd_list=df.sort_values(by=['user_id','rank']).reset_index(drop=True).loc[:,['user_id','item_id','item_catalog','rank','score']]
+    data=pd.DataFrame(X)
+    data['score']=pred
+    data['rank']=data.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
+    recmd_list=data.sort_values(by=['user_id','rank']).reset_index(drop=True).loc[:,['user_id','item_id','item_catalog','rank','score']]
     if predict_type=='single':
         if topK=='all':
             pass
         else:
-            recmd_list=df[df['rank']<=topK].sort_values(by=['user_id','rank'])
+            recmd_list=data[data['rank']<=topK].sort_values(by=['user_id','rank'])
         if json_like:
             return jsonify(recmd_list)
         return recmd_list
@@ -144,3 +150,101 @@ def save_model(model, path, new_max):
     with open(setting_file, 'w') as f:
         json.dump(model.setting, f)
 
+def get_lastNitem_embedding(vecotizer,retriever,user_log,N=10):
+    if not isinstance(user_log,dict):
+        raise TypeError
+    user_log['time_stamp']=pd.to_datetime(user_log['time_stamp'],dayfirst=True,infer_datetime_format=True)
+    lastNitem_embedding_df=[]
+    user_sets=user_log.user_id.unique()
+    for user_id in user_sets:
+        click_history=user_log.loc[user_log['user_id']==user_id,
+                                ['user_id','item_id','item_tag','item_catalog','time_stamp']][-N:].reset_index(drop=True)
+        max_record=len(click_history)
+        click_history['time_weight']=(datetime.datetime.now()-click_history['time_stamp']).apply(lambda x: x.days)
+        #click_history[click_history['time_weight']==0,'time_weight']=0.8
+        click_history['time_weight']=1/click_history['time_weight']
+        time_weight=click_history['time_weight'].values
+        global_embedding_matrix=[]
+        for idx in range(max_record):
+            feature_embedding_matrix=[]
+            for feature in item_fields:
+                feature_input=np.array([click_history.loc[idx,feature]])
+                vectorize=vecotizer.get_layer(feature+'_vectorize')(feature_input)
+                embedding=retriever.get_layer(feature+'_embedding')(vectorize).numpy()
+                if embedding.ndim==3:
+                    embedding=np.array(tf.keras.layers.Flatten()(embedding).numpy())
+                feature_embedding_matrix.append(embedding)
+            feature_embedding_matrix=np.concatenate(feature_embedding_matrix,axis=1)
+            embedding=retriever.get_layer(index=17)(feature_embedding_matrix).numpy()
+            global_embedding_matrix.append(embedding.reshape(1,-1))
+        global_avg_pooling_embedding=np.concatenate(global_embedding_matrix,axis=0)
+        global_avg_pooling_embedding=np.average(global_avg_pooling_embedding,axis=0,weights=time_weight)
+        global_avg_pooling_embedding_df=pd.DataFrame(global_avg_pooling_embedding.reshape(1,-1),
+                                                columns=['last'+str(N)+'clicks_embeeding_V'+str(k+1) for k in range(embedding_dim)])
+        global_avg_pooling_embedding_df['user_id']=user_id
+        lastNitem_embedding_df.append(global_avg_pooling_embedding_df)
+    lastNitem_embedding_df=pd.concat(lastNitem_embedding_df,axis=0)
+    return lastNitem_embedding_df
+def get_item_embedding(vectorizer,retriever,retrieve_data):
+    if not isinstance(retrieve_data,dict):
+        raise TypeError
+    if len(retrieve_data['user_id'])<len(retrieve_data['item_id']):
+        retrieve_data=pad_dict(retrieve_data)
+    retrieve_data=pd.DataFrame(retrieve_data)
+    item_sets=retrieve_data.item_id.unique()
+    embedding_dfs=[]
+    for item_id in item_sets:
+        item_feature=retrieve_data.loc[retrieve_data['item_id']==item_id,item_fields].drop_duplicates()
+        feature_embedding_matrix=[]
+        for feature in item_fields:
+            feature_input=np.array([item_feature[feature]])
+            vectorize=vectorizer.get_layer(feature+'_vectorize')(feature_input)
+            embedding=retriever.get_layer(feature+'_embedding')(vectorize).numpy()
+            if embedding.ndim==3:
+                embedding=tf.keras.layers.Flatten()(embedding).numpy()
+            feature_embedding_matrix.append(embedding)
+        feature_embedding_matrix=np.concatenate(feature_embedding_matrix,axis=1)
+        embedding=retriever.get_layer(index=17)(feature_embedding_matrix).numpy()
+        embedding_df=pd.DataFrame(embedding.reshape(1,-1),columns=['item_embedding_V'+str(k+1) for k in range(embedding_dim)])
+        embedding_df['item_id']=item_id
+        embedding_dfs.append(embedding_df)
+    item_embedding_df=pd.concat(embedding_dfs,axis=0)
+    return item_embedding_df
+
+def create_feature(vectorizer,retriever,data,user_log,retrieve_data,N=10):
+    item_embedding=get_item_embedding(vectorizer,retriever,retrieve_data)
+    lastN_embedding=get_lastNitem_embedding(vectorizer,retriever,user_log,N)
+    data=data.merge(lastN_embedding,on='user_id',how='left')
+    data=data.merge(item_embedding,on='item_id',how='left')
+    return data
+
+def get_user_embedding(vectorizer,retriever,retrieve_data):
+    if not isinstance(retrieve_data,dict):
+        raise TypeError
+    if len(retrieve_data['user_id'])<len(retrieve_data['item_id']):
+        retrieve_data=pad_dict(retrieve_data)
+    retrieve_data=pd.DataFrame(retrieve_data)
+    user_sets=retrieve_data.user_id.unique()
+    embedding_dfs=[]
+    for user_id in user_sets:
+        user_feature=retrieve_data.loc[retrieve_data['user_id']==user_id,user_fields].drop_duplicates()
+        feature_embedding_matrix=[]
+        for feature in user_fields:
+            feature_input=user_feature[feature]
+            vectorize=vectorizer.get_layer(feature+'_vectorize')(feature_input)
+            embedding=retriever.get_layer(feature+'_embedding')(vectorize).numpy()
+            if embedding.ndim==3:
+                embedding=tf.keras.layers.Flatten()(embedding).numpy()
+            feature_embedding_matrix.append(embedding)
+        feature_embedding_matrix=np.concatenate(feature_embedding_matrix,axis=1)
+        embedding=retriever.get_layer(index=16)(feature_embedding_matrix).numpy()
+        embedding_df=pd.DataFrame(embedding.reshape(1,-1),columns=['user_embedding_V'+str(k+1) for k in range(embedding_dim)])
+        embedding_df['user_id']=user_id
+        embedding_dfs.append(embedding_df)
+    user_embedding_df=pd.concat(embedding_dfs,axis=0)
+    return user_embedding_df
+
+def pad_dict(data):
+    for key in user_fields:
+        data[key]=np.repeat(data[key],len(data['item_id']))
+    return data
