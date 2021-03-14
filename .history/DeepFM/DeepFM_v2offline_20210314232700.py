@@ -25,6 +25,7 @@ int_fields=['item_catalog']
 context_fields=['similarity','similarity_sqrt','similarity_square']
 #model hyper parameters
 embedding_dim=8
+l2_regularization=3.2
 ## offline components
 '''
 sql="select op.id as ID,channel_id as user_id,Channel_use_type as user_type,number_type as member_type, \
@@ -367,7 +368,7 @@ class Crosslayer(tf.keras.layers.Layer):
     def get_config(self):
         config=super(Crosslayer,self).get_config()
         return config
-def DeepFM(input_dim=19,hidden_units=[512,256,128],activation='relu',dropouts=[0.2,0.3,0.4],l2_regularization=0.1):
+def DeepFM(input_dim=19,hidden_units=[32,32,32],dropouts=[0.2,0.3,0.4]):
     if len(hidden_units)!=len(dropouts):
         print('The number of hidden layer in DNN must equal to that of dropouts.')
         return 0
@@ -377,12 +378,12 @@ def DeepFM(input_dim=19,hidden_units=[512,256,128],activation='relu',dropouts=[0
     for i,layer_size in enumerate(hidden_units):
         DNN.add(tf.keras.layers.Dense(layer_size,kernel_regularizer=tf.keras.regularizers.l2(l2_regularization),
                         bias_regularizer=tf.keras.regularizers.l2(l2_regularization),
-                        kernel_initializer=tf.keras.initializers.glorot_normal(),activation=activation,name='dnn_layer'+str(i+1)))
+                        kernel_initializer=tf.keras.initializers.glorot_normal(),activation='relu',name='dnn_layer'+str(i+1)))
         DNN.add(tf.keras.layers.Dropout(dropouts[i]))
 
     DNN.add(tf.keras.layers.Dense(1,use_bias=False,activation=None,name='dnn_layer'+str(i+2)))
     #FM
-   
+    '''
     fm_linear=tf.keras.layers.Dense(1,kernel_regularizer=tf.keras.regularizers.l2(l2_regularization),use_bias=False,
                         bias_regularizer=tf.keras.regularizers.l2(l2_regularization),
                         kernel_initializer=tf.keras.initializers.glorot_normal(),name='fm_linear')(inputs)
@@ -390,14 +391,40 @@ def DeepFM(input_dim=19,hidden_units=[512,256,128],activation='relu',dropouts=[0
     fm_cross=Crosslayer(name='fm_cross')(inputs)
 
     fm_logit=tf.keras.layers.Add(name='fm_combine')([fm_linear,fm_cross])
-    
+    '''
     #forward propagation
     dnn_logit=DNN(inputs)
-    combine_logit=tf.keras.layers.Add(name='add_dnn_fm_logit')([dnn_logit,fm_logit])
-    pred=tf.keras.layers.Activation(activation='sigmoid',name='output')(combine_logit)
+    pred=tf.keras.layers.Activation(activation='sigmoid',name='output')(dnn_logit)
     model=tf.keras.Model(inputs=inputs,outputs=pred)
     return model
 # online components
+
+def guess_you_like(ranker,vectorizer,data,topK=36,json_like=True,predict_type='single'):
+    X=data.copy()
+    for key in user_fields:
+        X[key]=np.repeat(X[key],len(X['item_id']))
+    X_transform=vectorize(vectorizer,X)
+    pred=ranker.predict(X_transform)
+    data=pd.DataFrame(X)
+    data['score']=pred
+    data['rank']=data.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
+    recmd_list=data.sort_values(by=['user_id','rank']).reset_index(drop=True).loc[:,['user_id','item_id','item_catalog','rank','score']]
+    if predict_type=='single':
+        if topK=='all':
+            pass
+        else:
+            recmd_list=data[data['rank']<=topK].sort_values(by=['user_id','rank'])
+        if json_like:
+            return jsonify(recmd_list)
+        return recmd_list
+    elif predict_type=='class':
+        class_list=recmd_list.groupby(['user_id','item_catalog'],as_index=False)['score'].agg('mean')
+        class_list['catalog_rank']=class_list.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
+        class_list=class_list.sort_values(by=['user_id','catalog_rank']).loc[:,['user_id','item_catalog','catalog_rank']]
+        if json_like:
+            return jsonify(class_list)
+        return class_list
+
 def get_lastNitem_embedding(vecotizer,retriever,user_log,N=10):
     user_log['time_stamp']=pd.to_datetime(user_log['time_stamp'],dayfirst=True,infer_datetime_format=True)
     lastNitem_embedding_df=[]
@@ -407,7 +434,7 @@ def get_lastNitem_embedding(vecotizer,retriever,user_log,N=10):
                                 ['user_id','item_id','item_tag','item_catalog','time_stamp']][-N:].reset_index(drop=True)
         max_record=len(click_history)
         click_history['time_weight']=(datetime.datetime.now()-click_history['time_stamp']).apply(lambda x: x.days)
-        #click_history[click_history['time_weight']==0,'time_weight']=0.8
+        click_history[click_history['time_weight']==0,'time_weight']=0.8
         click_history['time_weight']=1/click_history['time_weight']
         time_weight=click_history['time_weight'].values
         global_embedding_matrix=[]
@@ -432,11 +459,11 @@ def get_lastNitem_embedding(vecotizer,retriever,user_log,N=10):
     lastNitem_embedding_df=pd.concat(lastNitem_embedding_df,axis=0)
     return lastNitem_embedding_df
 
-def get_user_embedding(vectorizer,retriever,retrieve_data):
-    user_sets=retrieve_data.user_id.unique()
+def get_user_embedding(vectorizer,retriever,rank_data):
+    user_sets=rank_data.user_id.unique()
     embedding_dfs=[]
     for user_id in user_sets:
-        user_feature=retrieve_data.loc[retrieve_data['user_id']==user_id,user_fields].drop_duplicates()
+        user_feature=rank_data.loc[rank_data['user_id']==user_id,user_fields].drop_duplicates()
         feature_embedding_matrix=[]
         for feature in user_fields:
             feature_input=user_feature[feature]
@@ -453,11 +480,11 @@ def get_user_embedding(vectorizer,retriever,retrieve_data):
     user_embedding_df=pd.concat(embedding_dfs,axis=0)
     return user_embedding_df
 
-def get_item_embedding(vectorizer,retriever,retrieve_data):
-    item_sets=retrieve_data.item_id.unique()
+def get_item_embedding(vectorizer,retriever,rank_data):
+    item_sets=rank_data.item_id.unique()
     embedding_dfs=[]
     for item_id in item_sets:
-        item_feature=retrieve_data.loc[retrieve_data['item_id']==item_id,item_fields].drop_duplicates()
+        item_feature=rank_data.loc[rank_data['item_id']==item_id,item_fields].drop_duplicates()
         feature_embedding_matrix=[]
         for feature in item_fields:
             feature_input=np.array([item_feature[feature]])
@@ -473,18 +500,7 @@ def get_item_embedding(vectorizer,retriever,retrieve_data):
         embedding_dfs.append(embedding_df)
     item_embedding_df=pd.concat(embedding_dfs,axis=0)
     return item_embedding_df
-def create_feature(vectorizer,retriever,data,user_log,retrieve_data,N=10):
-    item_embedding=get_item_embedding(vectorizer,retriever,retrieve_data)
-    lastN_embedding=get_lastNitem_embedding(vectorizer,retriever,user_log,N)
-    data=data.merge(lastN_embedding,on='user_id',how='left')
-    data=data.merge(item_embedding,on='item_id',how='left')
-    return data
 
-def get_last_click(user_log):
-    user_log=user_log.sort_values(by=['user_id','time_stamp'])
-    last_click=user_log.groupby('user_id').tail(1)
-    user_log=user_log.drop(last_click.index)
-    return user_log,last_click
 
 def load_model(path=r'.\DeepFM'):
     model=tf.keras.models.load_model(path)
@@ -507,35 +523,6 @@ def save_model(model, path=r'.\DeepFM', new_max=None):
     setting_file = path+'.setting'
     with open(setting_file, 'w') as f:
         json.dump(model.setting, f)
-def pad_dict(data):
-    for key in user_fields:
-        data[key]=np.repeat(data[key],len(data['item_id']))
-    return data
-def guess_you_like(ranker,vectorizer,data,topK=36,json_like=True,predict_type='single'):
-    X=data.copy()
-    if len(X['user_id'])<len(X['item_id']):
-        X=pad_dict(X)
-    X_transform=vectorize(vectorizer,X)
-    pred=ranker.predict(X_transform)
-    data=pd.DataFrame(X)
-    data['score']=pred
-    data['rank']=data.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
-    recmd_list=data.sort_values(by=['user_id','rank']).reset_index(drop=True).loc[:,['user_id','item_id','item_catalog','rank','score']]
-    if predict_type=='single':
-        if topK=='all':
-            pass
-        else:
-            recmd_list=data[data['rank']<=topK].sort_values(by=['user_id','rank'])
-        if json_like:
-            return jsonify(recmd_list)
-        return recmd_list
-    elif predict_type=='class':
-        class_list=recmd_list.groupby(['user_id','item_catalog'],as_index=False)['score'].agg('mean')
-        class_list['catalog_rank']=class_list.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
-        class_list=class_list.sort_values(by=['user_id','catalog_rank']).loc[:,['user_id','item_catalog','catalog_rank']]
-        if json_like:
-            return jsonify(class_list)
-        return class_list
 def retrain(ranker,data,epochs=3,learning_rate=0.01):
     data=pd.DataFrame(data)
     data=sampling(data,0)

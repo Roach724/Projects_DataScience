@@ -398,6 +398,33 @@ def DeepFM(input_dim=19,hidden_units=[512,256,128],activation='relu',dropouts=[0
     model=tf.keras.Model(inputs=inputs,outputs=pred)
     return model
 # online components
+
+def guess_you_like(ranker,vectorizer,data,topK=36,json_like=True,predict_type='single'):
+    X=data.copy()
+    for key in user_fields:
+        X[key]=np.repeat(X[key],len(X['item_id']))
+    X_transform=vectorize(vectorizer,X)
+    pred=ranker.predict(X_transform)
+    data=pd.DataFrame(X)
+    data['score']=pred
+    data['rank']=data.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
+    recmd_list=data.sort_values(by=['user_id','rank']).reset_index(drop=True).loc[:,['user_id','item_id','item_catalog','rank','score']]
+    if predict_type=='single':
+        if topK=='all':
+            pass
+        else:
+            recmd_list=data[data['rank']<=topK].sort_values(by=['user_id','rank'])
+        if json_like:
+            return jsonify(recmd_list)
+        return recmd_list
+    elif predict_type=='class':
+        class_list=recmd_list.groupby(['user_id','item_catalog'],as_index=False)['score'].agg('mean')
+        class_list['catalog_rank']=class_list.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
+        class_list=class_list.sort_values(by=['user_id','catalog_rank']).loc[:,['user_id','item_catalog','catalog_rank']]
+        if json_like:
+            return jsonify(class_list)
+        return class_list
+
 def get_lastNitem_embedding(vecotizer,retriever,user_log,N=10):
     user_log['time_stamp']=pd.to_datetime(user_log['time_stamp'],dayfirst=True,infer_datetime_format=True)
     lastNitem_embedding_df=[]
@@ -407,7 +434,7 @@ def get_lastNitem_embedding(vecotizer,retriever,user_log,N=10):
                                 ['user_id','item_id','item_tag','item_catalog','time_stamp']][-N:].reset_index(drop=True)
         max_record=len(click_history)
         click_history['time_weight']=(datetime.datetime.now()-click_history['time_stamp']).apply(lambda x: x.days)
-        #click_history[click_history['time_weight']==0,'time_weight']=0.8
+        click_history[click_history['time_weight']==0,'time_weight']=0.8
         click_history['time_weight']=1/click_history['time_weight']
         time_weight=click_history['time_weight'].values
         global_embedding_matrix=[]
@@ -507,35 +534,6 @@ def save_model(model, path=r'.\DeepFM', new_max=None):
     setting_file = path+'.setting'
     with open(setting_file, 'w') as f:
         json.dump(model.setting, f)
-def pad_dict(data):
-    for key in user_fields:
-        data[key]=np.repeat(data[key],len(data['item_id']))
-    return data
-def guess_you_like(ranker,vectorizer,data,topK=36,json_like=True,predict_type='single'):
-    X=data.copy()
-    if len(X['user_id'])<len(X['item_id']):
-        X=pad_dict(X)
-    X_transform=vectorize(vectorizer,X)
-    pred=ranker.predict(X_transform)
-    data=pd.DataFrame(X)
-    data['score']=pred
-    data['rank']=data.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
-    recmd_list=data.sort_values(by=['user_id','rank']).reset_index(drop=True).loc[:,['user_id','item_id','item_catalog','rank','score']]
-    if predict_type=='single':
-        if topK=='all':
-            pass
-        else:
-            recmd_list=data[data['rank']<=topK].sort_values(by=['user_id','rank'])
-        if json_like:
-            return jsonify(recmd_list)
-        return recmd_list
-    elif predict_type=='class':
-        class_list=recmd_list.groupby(['user_id','item_catalog'],as_index=False)['score'].agg('mean')
-        class_list['catalog_rank']=class_list.groupby(['user_id'])['score'].rank(method='first',ascending=False).sort_values()
-        class_list=class_list.sort_values(by=['user_id','catalog_rank']).loc[:,['user_id','item_catalog','catalog_rank']]
-        if json_like:
-            return jsonify(class_list)
-        return class_list
 def retrain(ranker,data,epochs=3,learning_rate=0.01):
     data=pd.DataFrame(data)
     data=sampling(data,0)
